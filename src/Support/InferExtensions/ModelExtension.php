@@ -42,9 +42,11 @@ use Dedoc\Scramble\Support\Type\Union;
 use Dedoc\Scramble\Support\Type\UnknownType;
 use Illuminate\Database\Eloquent\Attributes\UseResource;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use ReflectionClass;
+use ReflectionNamedType;
 use Throwable;
 
 class ModelExtension implements MethodReturnTypeExtension, PropertyTypeExtension, StaticMethodReturnTypeExtension
@@ -84,6 +86,10 @@ class ModelExtension implements MethodReturnTypeExtension, PropertyTypeExtension
             ? $propertyType
             : null;
 
+        if ($annotatedType && $this->isRelationMethod($event->getInstance()->name, $event->getName())) {
+            return $annotatedType;
+        }
+
         if (! $this->hasProperty($event->getInstance(), $event->getName())) {
             return $annotatedType;
         }
@@ -109,6 +115,31 @@ class ModelExtension implements MethodReturnTypeExtension, PropertyTypeExtension
         }
 
         throw new \LogicException('Should not happen');
+    }
+
+    /**
+     * A relation is documented with the type of the related model, so an annotated relation needs no
+     * database introspection: the annotation already carries everything the schema would tell us, the
+     * nullability of the relation included. Only a declared return type is accepted as the signal here,
+     * as establishing it in any other way would need the very database this check exists to avoid.
+     */
+    private function isRelationMethod(string $modelClassName, string $name): bool
+    {
+        if (! class_exists($modelClassName)) {
+            return false;
+        }
+
+        $reflection = new ReflectionClass($modelClassName);
+
+        if (! $reflection->hasMethod($name)) {
+            return false;
+        }
+
+        $returnType = $reflection->getMethod($name)->getReturnType();
+
+        return $returnType instanceof ReflectionNamedType
+            && ! $returnType->isBuiltin()
+            && is_a($returnType->getName(), Relation::class, true);
     }
 
     private function refineAnnotatedType(?Type $annotatedType, Type $inferredType): Type
