@@ -139,7 +139,7 @@ class ModelExtension implements MethodReturnTypeExtension, PropertyTypeExtension
 
         return $inferredType
             ? $this->refineAnnotatedType($annotatedType, $inferredType)
-            : $annotatedType;
+            : $annotatedType->clone();
     }
 
     /**
