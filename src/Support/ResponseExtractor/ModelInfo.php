@@ -7,7 +7,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Str;
-use PDOException;
 use ReflectionClass;
 use ReflectionMethod;
 use SplFileObject;
@@ -40,8 +39,7 @@ class ModelInfo
     {
         $class = $this->qualifyModel($this->class);
 
-        $reflectionClass = new ReflectionClass($class);
-        if (! $reflectionClass->isInstantiable()) {
+        if (! $model = $this->newModelInstance()) {
             return collect([
                 'instance' => null,
                 'class' => $class,
@@ -51,10 +49,7 @@ class ModelInfo
             ]);
         }
 
-        /** @var Model $model */
-        $model = app()->make($class);
-
-        $tableMissing = $this->tableIsMissing($model);
+        $tableMissing = ! $model->getConnection()->getSchemaBuilder()->hasTable($model->getTable());
 
         return $this->displayJson(
             $model,
@@ -66,17 +61,28 @@ class ModelInfo
     }
 
     /**
-     * An unreachable database is treated the same way as a table that is yet to be created: the schema
-     * simply cannot be read, so the documentation gets built from the annotations and casts alone. This
-     * keeps the documentation generatable in environments without a database, such as CI.
+     * The Eloquent casts are declared on the model itself, so unlike the rest of the model information
+     * they can be read without touching the schema.
+     *
+     * @return \Illuminate\Support\Collection<string, mixed>
      */
-    private function tableIsMissing(Model $model): bool
+    public function getCasts()
     {
-        try {
-            return ! $model->getConnection()->getSchemaBuilder()->hasTable($model->getTable());
-        } catch (PDOException) {
-            return true;
+        return ($model = $this->newModelInstance())
+            ? $this->getCastsWithDates($model)
+            : collect();
+    }
+
+    private function newModelInstance(): ?Model
+    {
+        $class = $this->qualifyModel($this->class);
+
+        if (! (new ReflectionClass($class))->isInstantiable()) {
+            return null;
         }
+
+        /** @var Model */
+        return app()->make($class);
     }
 
     /**
@@ -259,11 +265,7 @@ class ModelInfo
             return false;
         }
 
-        try {
-            $columns = collect($foreignKeyModel->getConnection()->getSchemaBuilder()->getColumns($foreignKeyModel->getTable()));
-        } catch (PDOException) {
-            return false;
-        }
+        $columns = collect($foreignKeyModel->getConnection()->getSchemaBuilder()->getColumns($foreignKeyModel->getTable()));
 
         foreach ($foreignKeys as $foreignKey) {
             $column = $columns->firstWhere('name', Str::afterLast($foreignKey, '.'));
